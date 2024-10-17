@@ -4,3 +4,5 @@ rembg
 Pillow
 numpy
 python-dotenv
+gunicorn
+google-api-python-client
