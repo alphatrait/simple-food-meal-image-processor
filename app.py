@@ -19,6 +19,14 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 # Retrieve API key from environment
 API_KEY = os.getenv('API_KEY')
 
+# Test Endpoint
+@app.route("/", methods=['GET'])
+def test():
+    test_response = """
+        Hi :)
+    """
+    return test_response, 200
+
 @app.route('/process_image', methods=['POST'])
 def process_image():
     # Check for the API key in the request headers
@@ -42,12 +50,14 @@ def process_image():
     name, _ = os.path.splitext(file.filename)
 
     try:
-        # Process the image
-        meal_image_editor(input_path, name)
+        # Process the image and get the GCS URL
+        gcs_url = meal_image_editor(input_path, name)
+        
+        if gcs_url is None:
+            return jsonify({"error": "Image processing failed"}), 500
 
-        # Return the path to the processed image
-        output_path = os.path.join(OUTPUT_FOLDER, f"{name}.png")
-        return jsonify({"message": "Image processed successfully.", "output_path": output_path}), 200
+        # Return the GCS URL of the processed image
+        return jsonify({"message": "Image processed successfully.", "output_url": gcs_url}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 import os
 from PIL import ImageEnhance
-
+from storage import save_in_gcs
 
 # Define the folder containing the input images
 input_folder = 'images'
@@ -242,22 +242,36 @@ def rotate_image(input):
 
 def blur_image(input):
     image = cv2.imread(input, cv2.IMREAD_UNCHANGED)
-    blurred_img = cv2.GaussianBlur(image, (41, 41), 0)
-    mask = np.zeros(image.shape, np.uint8)
+    
+    # Separate the alpha channel
+    rgb_channels = image[:, :, :3]
+    alpha_channel = image[:, :, 3]
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Create a mask for the non-transparent areas
+    _, mask = cv2.threshold(alpha_channel, 0, 255, cv2.THRESH_BINARY)
 
-    if contours:
-        cv2.drawContours(mask, contours, -1, (255, 255, 255), 5)
-        output = np.where(mask == np.array([255, 255, 255]), blurred_img, image)
-        cv2.imwrite('temp/blur.png', output)
-        print("Image blurred and saved.")
-    else:
-        # Handle the case when no contours are found
-        cv2.imwrite('temp/blur.png', blurred_img)
-        print("Image blurred and saved.")
+    # Create a larger mask for the blurred area
+    kernel = np.ones((41, 41), np.uint8)
+    dilated_mask = cv2.dilate(mask, kernel, iterations=1)
+
+    # Invert the masks
+    inv_mask = cv2.bitwise_not(mask)
+    inv_dilated_mask = cv2.bitwise_not(dilated_mask)
+
+    # Create the blur effect
+    blurred_rgb = cv2.GaussianBlur(rgb_channels, (41, 41), 0)
+
+    # Combine the original image with the blurred edges
+    result_rgb = rgb_channels.copy()
+    result_rgb = cv2.bitwise_and(result_rgb, result_rgb, mask=mask)
+    blurred_edges = cv2.bitwise_and(blurred_rgb, blurred_rgb, mask=inv_dilated_mask)
+    result_rgb = cv2.add(result_rgb, blurred_edges)
+
+    # Combine the result with the original alpha channel
+    result = cv2.merge([result_rgb, alpha_channel])
+
+    cv2.imwrite('temp/blur.png', result)
+    print("Image blurred and saved.")
 
     return 'temp/blur.png'
 
@@ -278,41 +292,42 @@ def add(input, name):
 
 
 def meal_image_editor(input, name):
- 
-    input = rotate_if_needed(input)
-    input = enhance_image(input)
-    input = remove_bg(input)
-    input = calculate_and_resize(input)
-    input = align_center_of_object(input)
-    input = rotate_image(input)
-    input = square_the_image(input)
-    input = blur_image(input)
-    add(input, name)
+    try:
+        input = rotate_if_needed(input)
+        if not input:
+            raise ValueError("Rotation failed")
 
+        input = enhance_image(input)
+        if not input:
+            raise ValueError("Enhancement failed")
 
+        input = remove_bg(input)
+        if not input:
+            raise ValueError("Background removal failed")
 
-for input_file in input_files:
-    # Check if the file is an image (you can use other criteria as needed)
-    if input_file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
-        input_path = os.path.join(input_folder, input_file)
+        input = calculate_and_resize(input)
+        if not input:
+            raise ValueError("Resizing failed")
 
-        name, extension = input_file.split('.')
+        input = align_center_of_object(input)
+        if not input:
+            raise ValueError("Centering failed")
 
-        # Print "Editing image # {image_number}" before the function call
-        print(f"Editing image #{image_number} - {input_file}")
-        print("############################################")
-        print("############################################")
-        print("############################################")
+        input = rotate_image(input)
+        if not input:
+            raise ValueError("Rotation failed")
+
+        input = square_the_image(input)
+        if not input:
+            raise ValueError("Squaring failed")
+
+        input = blur_image(input)
+        if not input:
+            raise ValueError("Blurring failed")
+
+        add(input, name)
         
-        # Call the meal_image_editor function with the input and output file paths
-        meal_image_editor(input_path, name)
-
-        # Print "Finished editing image # {image_number}" after the function call
-        print(f"Finished editing image #{image_number} - {input_file}")
-        print("############################################")
-        print("############################################")
-        print("############################################")
-
-        # Increment the image number
-        image_number += 1
-
+        return save_in_gcs(f"edited/{name}.png")
+    except Exception as e:
+        print(f"Error in meal_image_editor: {str(e)}")
+        return None
